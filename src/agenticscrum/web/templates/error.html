@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-xxl-10">
+    <div class="alert alert-danger">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <strong>Internal Server Error</strong>
+          <div class="as-meta">{{ method }} {{ path }} · {{ when }}</div>
+        </div>
+        <a class="btn btn-sm btn-outline-light" href="/">Back to dashboard</a>
+      </div>
+      <hr class="my-2">
+      <div><strong>{{ error_type }}</strong>: {{ error_message }}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Traceback</strong>
+        <span class="as-meta">Copy/paste this into chat</span>
+      </div>
+      <div class="card-body">
+        <pre class="as-pre mb-0 small">{{ traceback }}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

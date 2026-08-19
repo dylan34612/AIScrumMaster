@@ -1,0 +1,111 @@
+{# Shared proposal action card for chat sidebar / inline use #}
+{% macro proposal_actions(proposal, chat_session, proposal_judgements, proposal_previews, settings=None) %}
+  {% set j = proposal_judgements.get(proposal.id) %}
+  {% set needs_confirm = proposal.change_type.value in ["Create", "Update"]
+    or (proposal.change_type.value == "StateTransition"
+        and proposal.proposed_payload
+        and (proposal.proposed_payload.get("newState") or "")|lower in ["done", "closed", "removed"]) %}
+  {% if proposal.status.value == "Pending" %}
+    <div class="btn-group btn-group-sm" role="group" aria-label="Proposal actions">
+      <form class="d-inline"
+            hx-post="/chat/proposals/{{ proposal.id }}/approve"
+            hx-target="#chat-proposals"
+            hx-swap="innerHTML"
+            {% if needs_confirm %}onsubmit="return confirm('Apply this {{ proposal.change_type.value }} to Azure DevOps?\\n\\n{{ proposal.title|e }}');"{% endif %}>
+        <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+        <button class="btn btn-success" type="submit">Approve</button>
+      </form>
+      <form class="d-inline"
+            hx-post="/chat/proposals/{{ proposal.id }}/reject"
+            hx-target="#chat-proposals"
+            hx-swap="innerHTML">
+        <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+        <button class="btn btn-outline-danger" type="submit">Reject</button>
+      </form>
+      <form class="d-inline"
+            hx-post="/chat/proposals/{{ proposal.id }}/judge"
+            hx-target="#chat-proposals"
+            hx-swap="innerHTML">
+        <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+        <button class="btn btn-outline-primary" type="submit">Judge</button>
+      </form>
+    </div>
+  {% elif proposal.status.value == "Failed" %}
+    <div class="d-flex flex-column align-items-end gap-1">
+      <form class="d-inline"
+            hx-post="/chat/proposals/{{ proposal.id }}/retry"
+            hx-target="#chat-proposals"
+            hx-swap="innerHTML"
+            hx-indicator="#chat-indicator">
+        <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+        <button class="btn btn-sm btn-primary" type="submit">Fix with AI</button>
+      </form>
+      <form class="d-inline"
+            hx-post="/chat/proposals/{{ proposal.id }}/reject"
+            hx-target="#chat-proposals"
+            hx-swap="innerHTML">
+        <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+        <button class="btn btn-sm btn-outline-danger" type="submit">Reject</button>
+      </form>
+      {% if proposal.error_message %}
+        <details>
+          <summary class="small text-danger">Error</summary>
+          <div class="as-meta text-wrap">{{ proposal.error_message }}</div>
+        </details>
+      {% endif %}
+    </div>
+  {% elif proposal.status.value == "Applied" %}
+    <form class="d-inline"
+          hx-post="/chat/proposals/{{ proposal.id }}/undo"
+          hx-target="#chat-proposals"
+          hx-swap="innerHTML"
+          onsubmit="return confirm('Create a soft-undo compensating proposal?');">
+      <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+      <button class="btn btn-sm btn-outline-secondary" type="submit">Undo</button>
+    </form>
+  {% endif %}
+{% endmacro %}
+
+{% macro proposal_row(proposal, chat_session, proposal_judgements, proposal_previews) %}
+  {% set j = proposal_judgements.get(proposal.id) %}
+  <tr>
+    <td>
+      <span class="badge {% if proposal.confidence_score >= 80 %}text-bg-success{% elif proposal.confidence_score >= 60 %}text-bg-warning{% else %}text-bg-danger{% endif %}">
+        {{ proposal.confidence_score }}
+      </span>
+      {% if j %}
+        <div class="small mt-1">
+          <span class="badge {% if j.risk_level == 'low' %}text-bg-success{% elif j.risk_level == 'medium' %}text-bg-warning{% else %}text-bg-danger{% endif %}">
+            Judge {{ j.adjusted_confidence }} · {{ j.risk_level }}
+          </span>
+          {% if j.auto_apply_ok %}
+            <span class="badge text-bg-primary">Auto-apply OK</span>
+          {% endif %}
+        </div>
+      {% endif %}
+    </td>
+    <td>
+      <div class="as-meta">
+        {{ proposal.change_type.value }} ·
+        {% if proposal.target_work_item_id %}
+          {% set tp = proposal_previews.get(proposal.id) %}
+          {% if tp and tp.target_url %}
+            <a href="{{ tp.target_url }}" target="_blank">#{{ proposal.target_work_item_id }}</a>
+          {% else %}
+            #{{ proposal.target_work_item_id }}
+          {% endif %}
+        {% else %}
+          New {{ proposal.work_item_type.value }}
+        {% endif %}
+      </div>
+      <div class="fw-semibold">{{ proposal.title }}</div>
+      <div class="as-meta text-wrap">{{ proposal.rationale }}</div>
+    </td>
+    <td>
+      <span class="badge text-bg-secondary">{{ proposal.status.value }}</span>
+    </td>
+    <td class="text-nowrap text-end">
+      {{ proposal_actions(proposal, chat_session, proposal_judgements, proposal_previews) }}
+    </td>
+  </tr>
+{% endmacro %}
