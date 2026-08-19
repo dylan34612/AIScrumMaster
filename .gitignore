@@ -1,0 +1,36 @@
+# Secrets and local config
+.env
+.env.local
+*.pem
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# App runtime data
+data/
+logs/
+*.db
+*.db-journal
+
+# IDE / OS
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Debug / launcher leftovers
+*.log

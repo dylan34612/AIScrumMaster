@@ -1,0 +1,4 @@
+team:
+  - display_name: "Jane Doe"
+    email: "jane.doe@example.com"
+    ado_unique_name: "jane.doe@example.com"

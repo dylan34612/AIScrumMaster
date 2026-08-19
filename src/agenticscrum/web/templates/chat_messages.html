@@ -1,0 +1,44 @@
+{% set ado_org = settings.ado_org if settings is defined else None %}
+{% set ado_project = settings.ado_project if settings is defined else None %}
+{% if messages %}
+  {% for message in messages %}
+    {% set is_user = (message.role.value == "user") %}
+    {% set is_assistant = (message.role.value == "assistant") %}
+    {% set is_system = (message.role.value == "system") %}
+    {% set kind = message.message_kind if message.message_kind else "message" %}
+    {% set meta = message.message_meta if message.message_meta else {} %}
+
+    <div class="mb-2" data-message-kind="{{ kind }}">
+      <div class="d-flex {% if is_user %}justify-content-end{% else %}justify-content-start{% endif %}">
+        <div class="as-chat-bubble w-100 {% if is_user %}ms-auto{% endif %}">
+          <div class="as-meta mb-1 {% if is_user %}text-end{% endif %}">
+            {% if is_user %}You{% elif is_assistant %}Agentic Scrum{% else %}System{% endif %}
+            · {{ message.created_at | relative_time }}
+          </div>
+          {% if is_user %}
+            <div class="px-3 py-2 rounded-3 as-chat-bubble-user">{{ message.content | e | replace("\n", "<br>") | safe }}</div>
+          {% elif is_assistant %}
+            <div class="px-3 py-2 rounded-3 border as-chat-bubble-assistant as-chat-md">
+              {{ message.content | chat_markdown(ado_org, ado_project) | safe }}
+            </div>
+            {% if meta and meta.get("tool_summary") %}
+              <details class="mt-1">
+                <summary class="small text-muted">Checked board</summary>
+                <div class="as-meta">{{ meta.get("tool_summary") }}</div>
+              </details>
+            {% endif %}
+            {% if meta and meta.get("ado_unavailable") %}
+              <div class="alert alert-warning py-1 px-2 small mt-1 mb-0">ADO tools unavailable — answered without live board data.</div>
+            {% endif %}
+          {% else %}
+            <div class="px-3 py-2 rounded-3 border as-chat-bubble-system as-chat-md">
+              {{ message.content | chat_markdown(ado_org, ado_project) | safe }}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+{% else %}
+  <div class="text-muted">Start a conversation. Ask about WIP, blockers, or say “move #412 to Committed”.</div>
+{% endif %}

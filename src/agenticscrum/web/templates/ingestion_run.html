@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+{% if run.status.value == "Running" %}
+  <script>
+    setTimeout(() => window.location.reload(), 3000);
+  </script>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Ingestion Run #{{ run.id }}</h1>
+    <div class="as-meta">
+      Status: <span class="badge text-bg-secondary">{{ run.status.value }}</span>
+      · Started: {{ run.started_at }}
+      · Running: {{ age_seconds }}s
+      {% if run.completed_at %}
+        · Completed: {{ run.completed_at }}
+      {% endif %}
+    </div>
+    <div class="small mt-1">
+      Meetings processed: <span class="badge text-bg-secondary">{{ run.meetings_processed }}</span>
+      Proposals created: <span class="badge text-bg-secondary">{{ run.proposals_created }}</span>
+      {% if run.status.value == "Running" %}
+        <span class="badge text-bg-primary">Auto-refreshing…</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if run.status.value == "Running" %}
+      <form method="post" action="/ingestion/runs/{{ run.id }}/mark-failed">
+        <input type="hidden" name="reason" value="Marked failed from run details page (appears stuck).">
+        <button class="btn btn-outline-danger">Mark failed / unstick</button>
+      </form>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="/">Back to dashboard</a>
+  </div>
+</div>
+
+{% if run.error_message %}
+  <div class="alert alert-warning small">
+    <strong>Run issues</strong>
+    <pre class="as-pre mb-0 small">{{ run.error_message }}</pre>
+  </div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-12 col-xxl-7">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Progress log</strong>
+        <span class="badge text-bg-secondary">{{ events|length }}</span>
+      </div>
+      <div class="card-body">
+        {% if events %}
+          <ul class="list-group">
+            {% for ev in events %}
+              <li class="list-group-item small">
+                <span class="text-muted">{{ ev.created_at }}</span>
+                <span class="badge {% if ev.level == "ERROR" %}text-bg-danger{% elif ev.level == "WARN" %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
+                  {{ ev.level }}
+                </span>
+                {{ ev.message }}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="as-meta">No progress events recorded yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xxl-5">
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Meetings ingested</strong>
+        <span class="badge text-bg-secondary">{{ meetings|length }}</span>
+      </div>
+      <div class="card-body small">
+        {% if meetings %}
+          <ul class="mb-0">
+            {% for m in meetings %}
+              <li>
+                <strong>{{ m.title }}</strong>
+                <span class="text-muted">({{ m.source }} · {{ m.meeting_date }})</span>
+                <form method="post" action="/ingested-meetings/{{ m.id }}/rerun" class="d-inline">
+                  <button class="btn btn-sm btn-outline-primary py-0 ms-2">Re-run</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">No ingested meetings captured yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>AI requests &amp; responses</strong>
+        <span class="badge text-bg-secondary">{{ llm_calls|length }}</span>
+      </div>
+      <div class="card-body small">
+        {% if llm_calls %}
+          {% for call in llm_calls %}
+            <details class="mb-2">
+              <summary class="text-wrap">
+                <span class="text-muted">{{ call.created_at }}</span>
+                · <code>{{ call.operation }}</code>
+                · <span class="text-muted">{{ call.duration_ms }}ms</span>
+                {% if call.error_message %}
+                  · <span class="badge text-bg-danger">ERROR</span>
+                {% else %}
+                  · <span class="badge text-bg-success">OK</span>
+                {% endif %}
+              </summary>
+              {% if call.error_message %}
+                <div class="alert alert-warning py-1 px-2 mt-2 mb-2 small">
+                  <strong>Error</strong>
+                  <pre class="as-pre mb-0 small">{{ call.error_message }}</pre>
+                </div>
+              {% endif %}
+              <div class="mt-2">
+                <strong>Request prompt</strong>
+                <pre class="as-pre mb-0 small">{{ call.request_prompt | e }}</pre>
+              </div>
+              <div class="mt-2">
+                <strong>Raw response</strong>
+                <pre class="as-pre mb-0 small">{{ call.response_text | e }}</pre>
+              </div>
+              {% if call.normalized_json %}
+                <div class="mt-2">
+                  <strong>Normalized JSON</strong>
+                  <pre class="as-pre mb-0 small">{{ call.normalized_json | tojson(indent=2) }}</pre>
+                </div>
+              {% endif %}
+            </details>
+          {% endfor %}
+        {% else %}
+          <div class="text-muted">No AI calls recorded yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Tool calls</strong>
+        <span class="badge text-bg-secondary">{{ tool_calls|length }}</span>
+      </div>
+      <div class="card-body small">
+        {% if tool_calls %}
+          <ul class="mb-0">
+            {% for t in tool_calls %}
+              <li class="text-wrap">
+                <span class="text-muted">{{ t.created_at }}</span>
+                <code>{{ t.tool_name }}</code>
+                <span class="text-muted">({{ t.duration_ms }}ms)</span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">No tool calls recorded yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

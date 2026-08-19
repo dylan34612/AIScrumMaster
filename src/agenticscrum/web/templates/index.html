@@ -1,0 +1,448 @@
+{% extends "base.html" %}
+{% block content %}
+{% set proposal_previews = proposal_previews | default({}) %}
+{% set proposal_judgements = proposal_judgements | default({}) %}
+<script>
+  (function() {
+    const key = "agenticscrum_ingest_start_wait";
+    const isRunning = {{ 'true' if running_runs else 'false' }};
+    const starting = {{ 'true' if starting else 'false' }};
+
+    if (isRunning) {
+      sessionStorage.removeItem(key);
+      setTimeout(() => window.location.reload(), 5000);
+      return;
+    }
+
+    if (starting) {
+      sessionStorage.setItem(key, "20"); // ~30s at 1.5s intervals
+    }
+
+    const remaining = parseInt(sessionStorage.getItem(key) || "0", 10);
+    if (remaining > 0) {
+      sessionStorage.setItem(key, String(remaining - 1));
+      setTimeout(() => window.location.replace("/"), 1500);
+      return;
+    }
+
+    sessionStorage.removeItem(key);
+  })();
+</script>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Agentic Scrum Dashboard</h1>
+    <div class="as-meta">
+      Last run:
+      {% if last_run %}
+        {{ last_run.started_at }} ({{ last_run.status.value }})
+        · <a href="/ingestion/runs/{{ last_run.id }}">details</a>
+        · <a href="/ingestion/runs">all runs</a>
+      {% else %}
+        Never
+      {% endif %}
+      | Daily run: {{ settings.app_daily_run_time }} {{ settings.app_timezone }}
+    </div>
+    <div class="small mt-2">
+      {% if running_runs %}
+        <span class="badge text-bg-primary as-badge">
+          Ingestion running ({{ running_runs|length }})
+        </span>
+      {% else %}
+        <span class="badge text-bg-secondary as-badge">Ingestion idle</span>
+      {% endif %}
+      <span class="badge {% if config_status.ado_pat_configured %}text-bg-success{% else %}text-bg-danger{% endif %} as-badge">
+        ADO PAT {% if config_status.ado_pat_configured %}loaded{% else %}missing{% endif %}
+      </span>
+      <span class="badge {% if config_status.llm_configured %}text-bg-success{% else %}text-bg-warning{% endif %} as-badge">
+        LLM {% if config_status.llm_configured %}configured{% else %}incomplete{% endif %}
+      </span>
+    </div>
+    {% if running_details %}
+      <div class="alert alert-info py-2 px-2 mt-2 mb-0 small">
+        <div class="d-flex justify-content-between align-items-center">
+          <strong>Ingestion progress</strong>
+          <span class="text-muted">Auto-refreshing…</span>
+        </div>
+        <ul class="mb-0">
+          {% for item in running_details %}
+            {% set run = item.run %}
+            {% set last = item.last_event %}
+            <li>
+              <strong>Run #{{ run.id }}</strong>
+              · running {{ item.age_seconds }}s
+              · meetings_processed={{ run.meetings_processed }}
+              · proposals_created={{ run.proposals_created }}
+              · <a href="/ingestion/runs/{{ run.id }}">details</a>
+              <form method="post" action="/ingestion/runs/{{ run.id }}/mark-failed" class="d-inline">
+                <input type="hidden" name="reason" value="Marked failed to unstick UI (no progress).">
+                <button class="btn btn-sm btn-outline-danger py-0 ms-2">Unstick</button>
+              </form>
+              {% if last %}
+                <div class="text-muted">
+                  Last update: {{ last.created_at }} ({{ last.level }}) — {{ last.message }}
+                </div>
+              {% else %}
+                <div class="text-muted">No progress events yet.</div>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if last_run and last_run.error_message %}
+      <div class="alert alert-warning py-1 px-2 mt-2 mb-0 small">
+        <div class="d-flex justify-content-between align-items-center">
+          <strong>Last ingestion issues:</strong>
+          <form method="post" action="/ingestion/clear-errors">
+            <button class="btn btn-sm btn-outline-secondary py-0">Clear errors</button>
+          </form>
+        </div>
+        <pre class="as-pre mb-0 small">{{ last_run.error_message }}</pre>
+      </div>
+    {% endif %}
+  </div>
+  <form method="post" action="/ingest/run">
+    <button class="btn btn-primary" {% if running_runs %}disabled{% endif %}>
+      {% if running_runs %}Ingestion running...{% else %}Run ingestion now{% endif %}
+    </button>
+  </form>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xxl-8 col-xl-7">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between">
+        <div class="d-flex align-items-center gap-2">
+          <strong>Pending proposals</strong>
+          <span class="badge text-bg-secondary">{{ pending|length }}</span>
+        </div>
+        <div class="d-flex gap-2">
+          <form method="post" action="/proposals/judge" class="m-0">
+            <button class="btn btn-sm btn-outline-primary" type="submit">
+              Judge pending
+            </button>
+          </form>
+          <form method="post" action="/proposals/bulk-reject-placeholder-comments" class="m-0">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">
+              Reject placeholder comments
+            </button>
+          </form>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover table-striped align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Confidence</th>
+              <th>Meeting</th>
+              <th>Type</th>
+              <th>Target</th>
+              <th>Summary</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for proposal in pending %}
+            <tr>
+              <td>
+                <span class="badge {% if proposal.confidence_score >= 80 %}text-bg-success{% elif proposal.confidence_score >= 60 %}text-bg-warning{% else %}text-bg-danger{% endif %}">
+                  {{ proposal.confidence_score }}
+                </span>
+                {% set j = proposal_judgements.get(proposal.id) %}
+                {% if j %}
+                  <div class="small mt-1">
+                    <span class="badge {% if j.risk_level == 'low' %}text-bg-success{% elif j.risk_level == 'medium' %}text-bg-warning{% else %}text-bg-danger{% endif %}">
+                      Judge {{ j.adjusted_confidence }} · {{ j.risk_level }}
+                    </span>
+                    {% if j.auto_apply_ok %}
+                      <span class="badge text-bg-primary">Auto-apply OK</span>
+                    {% endif %}
+                  </div>
+                  {% if (j.reasons and j.reasons|length) or (j.flags and j.flags|length) or j.error_message %}
+                    <details class="mt-1">
+                      <summary class="small">Judge</summary>
+                      {% if j.reasons and j.reasons|length %}
+                        <ul class="small mb-0">
+                          {% for reason in j.reasons %}
+                            <li class="text-wrap">{{ reason }}</li>
+                          {% endfor %}
+                        </ul>
+                      {% endif %}
+                      {% if j.flags and j.flags|length %}
+                        <div class="small text-muted mt-1">Flags: {{ j.flags | join(", ") }}</div>
+                      {% endif %}
+                      {% if j.error_message %}
+                        <div class="small text-danger mt-1">{{ j.error_message }}</div>
+                      {% endif %}
+                    </details>
+                  {% endif %}
+                {% endif %}
+              </td>
+              <td>{{ proposal.source_meeting_title }}</td>
+              <td>{{ proposal.change_type.value }}</td>
+              <td>
+                {% if proposal.target_work_item_id %}
+                  {% set tp = proposal_previews.get(proposal.id) %}
+                  {% if tp and tp.target_url %}
+                    <a href="{{ tp.target_url }}" target="_blank">#{{ proposal.target_work_item_id }}</a>
+                  {% else %}
+                    #{{ proposal.target_work_item_id }}
+                  {% endif %}
+                  {% if tp and tp.target_title %}
+                    <div class="as-meta text-wrap">{{ tp.target_title }}</div>
+                  {% endif %}
+                  {% if tp and (tp.target_state or tp.target_assigned_to) %}
+                    <div class="as-meta">
+                      {% if tp.target_state %}{{ tp.target_state }}{% endif %}
+                      {% if tp.target_assigned_to %} · {{ tp.target_assigned_to }}{% endif %}
+                    </div>
+                  {% endif %}
+                {% else %}
+                  New {{ proposal.work_item_type.value }}
+                {% endif %}
+              </td>
+              <td>
+                <div class="fw-semibold">{{ proposal.title }}</div>
+                <div class="as-meta text-wrap">{{ proposal.rationale }}</div>
+                {% if proposal.split_group_id %}
+                  <span class="badge text-bg-info">Split {{ proposal.split_group_id }}</span>
+                {% endif %}
+                {% if proposal.proposed_payload.fieldUpdates %}
+                  <small class="text-muted d-block">
+                    {% for key, value in proposal.proposed_payload.fieldUpdates.items() %}
+                      {% if "Effort" in key or "StoryPoints" in key %}{{ key }}={{ value }}{% endif %}
+                    {% endfor %}
+                  </small>
+                {% endif %}
+                <details class="mt-1">
+                  <summary class="small">Source quote</summary>
+                  <blockquote class="small border-start ps-2">{{ proposal.source_quote }}</blockquote>
+                </details>
+                {% set preview = proposal_previews.get(proposal.id) %}
+                {% if preview %}
+                <details class="mt-2" {% if proposal.change_type.value in ["Comment", "Create"] %}open{% endif %}>
+                    <summary class="small">Proposed change details</summary>
+                    <div class="small mt-1">
+                      {% if preview.new_state %}
+                        <div><strong>New state</strong>: {{ preview.new_state }}</div>
+                      {% endif %}
+                      {% if preview.new_assignee %}
+                        <div><strong>New assignee</strong>: {{ preview.new_assignee }}</div>
+                      {% endif %}
+                      {% if preview.parent_work_item_id %}
+                        <div><strong>Parent</strong>: #{{ preview.parent_work_item_id }}</div>
+                      {% endif %}
+                      {% if preview.applied_fields and preview.applied_fields.items() %}
+                        <div class="mt-1"><strong>Applied fields</strong>:</div>
+                        <ul class="mb-0">
+                          {% for key, value in preview.applied_fields.items() %}
+                            {% set v = (value|string) %}
+                            <li class="text-wrap">
+                              <code>{{ key }}</code>
+                              {% if v|length > 180 %}
+                                <details>
+                                  <summary class="small text-muted">view value</summary>
+                                  <pre class="as-pre mb-0 small">{{ v | e }}</pre>
+                                </details>
+                              {% else %}
+                                <span>: {{ v }}</span>
+                              {% endif %}
+                            </li>
+                          {% endfor %}
+                        </ul>
+                      {% endif %}
+                      {% if preview.comment_preview %}
+                        <div class="mt-2"><strong>ADO comment preview (what will be posted)</strong></div>
+                        <pre class="as-pre mb-0 small">{{ preview.comment_preview | e }}</pre>
+                      {% endif %}
+                      <details class="mt-2">
+                        <summary class="small text-muted">Raw payload (LLM)</summary>
+                        <pre class="as-pre mb-0 small">{{ proposal.proposed_payload | tojson(indent=2) }}</pre>
+                      </details>
+                    </div>
+                  </details>
+                {% endif %}
+              </td>
+              <td class="text-nowrap text-end">
+                <div class="btn-group btn-group-sm" role="group" aria-label="Proposal actions">
+                  <form class="d-inline" method="post" action="/proposals/{{ proposal.id }}/approve">
+                    <button class="btn btn-success">Approve</button>
+                  </form>
+                  <form class="d-inline" method="post" action="/proposals/{{ proposal.id }}/judge">
+                    <button class="btn btn-outline-primary">Judge</button>
+                  </form>
+                  <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#edit-{{ proposal.id }}">Edit</button>
+                  <button class="btn btn-outline-danger" data-bs-toggle="collapse" data-bs-target="#reject-{{ proposal.id }}">Reject</button>
+                </div>
+              </td>
+            </tr>
+            <tr class="collapse" id="edit-{{ proposal.id }}">
+              <td colspan="6">
+                <form method="post" action="/proposals/{{ proposal.id }}/edit">
+                  <textarea class="form-control font-monospace" name="payload_json" rows="8">{{ proposal.proposed_payload | tojson(indent=2) }}</textarea>
+                  <button class="btn btn-sm btn-primary mt-2">Save payload</button>
+                </form>
+                <form class="mt-3" method="post" action="/proposals/{{ proposal.id }}/change-request">
+                  <label class="form-label">Ask Agentic Scrum to revise this proposal</label>
+                  <textarea class="form-control" name="request_text" rows="2" placeholder="Example: split this into smaller PBIs and keep effort under 13"></textarea>
+                  <button class="btn btn-sm btn-secondary mt-2">Run change request</button>
+                </form>
+              </td>
+            </tr>
+            <tr class="collapse" id="reject-{{ proposal.id }}">
+              <td colspan="6">
+                <form method="post" action="/proposals/{{ proposal.id }}/reject">
+                  <input class="form-control" name="reason" placeholder="Optional rejection reason">
+                  <button class="btn btn-sm btn-danger mt-2">Reject proposal</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted">No pending proposals.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xxl-4 col-xl-5">
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between">
+        <strong>Notes inbox</strong>
+        <span class="badge text-bg-secondary">{{ inbox_status.pending_count }}</span>
+      </div>
+      <div class="card-body small">
+        {% if not inbox_status.enabled %}
+          <div class="text-muted">Disabled (set <code>NOTES_INBOX_ENABLED=true</code>).</div>
+        {% else %}
+          <div>Drop <code>.md</code> / <code>.txt</code> / <code>.vtt</code> / <code>.docx</code> files into:</div>
+          <div class="mb-1"><code>{{ inbox_status.inbox_path }}</code></div>
+          <div class="text-muted">
+            Extensions: {{ inbox_status.extensions }} · Min age: {{ inbox_status.min_age_seconds }}s
+          </div>
+          <div class="text-muted mt-1">
+            After successful ingestion: {{ inbox_status.archive_mode }} → <code>{{ inbox_status.archive_path }}</code>
+          </div>
+          <div class="text-muted mt-2">Filename tip: <code>YYYY-MM-DD - Meeting Title.md</code></div>
+          {% if inbox_status.error %}
+            <div class="alert alert-warning py-1 px-2 mt-2 mb-0 small">
+              <strong>Inbox error:</strong> {{ inbox_status.error }}
+            </div>
+          {% elif inbox_status.pending_files %}
+            <details class="mt-2">
+              <summary class="small">Pending files</summary>
+              <ul class="mb-0">
+                {% for name in inbox_status.pending_files %}
+                  <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if inbox_status.pending_count > (inbox_status.pending_files|length) %}
+                  <li class="text-muted">
+                    ...and {{ inbox_status.pending_count - (inbox_status.pending_files|length) }} more
+                  </li>
+                {% endif %}
+              </ul>
+            </details>
+          {% else %}
+            <div class="text-muted mt-2">No pending inbox files.</div>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><strong>Paste transcript</strong></div>
+      <div class="card-body">
+        <form method="post" action="/transcripts">
+          <label class="form-label mb-1 as-meta">Meeting title</label>
+          <input class="form-control mb-2" name="title" placeholder="e.g., Sprint Planning" required>
+          <label class="form-label mb-1 as-meta">Meeting date</label>
+          <input class="form-control mb-2" name="meeting_date" type="date" required>
+          <label class="form-label mb-1 as-meta">Transcript / notes</label>
+          <textarea class="form-control mb-2" name="notes" rows="8" placeholder="Paste meeting transcript…" required></textarea>
+          <button class="btn btn-primary" {% if running_runs %}disabled{% endif %}>
+            {% if running_runs %}Ingestion running...{% else %}Parse transcript{% endif %}
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><strong>Failures</strong></div>
+      <ul class="list-group list-group-flush">
+        {% for proposal in failures %}
+          <li class="list-group-item small">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div class="text-wrap">
+                <strong>#{{ proposal.id }}</strong> {{ proposal.title }}
+                {% if proposal.error_message %}
+                  <div class="as-meta text-wrap mt-1">{{ proposal.error_message }}</div>
+                {% endif %}
+              </div>
+              <form method="post" action="/proposals/{{ proposal.id }}/retry" class="m-0">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Fix with AI</button>
+              </form>
+            </div>
+          </li>
+        {% else %}
+          <li class="list-group-item text-muted">No failures.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-12 col-xl-6">
+    <div class="card">
+      <div class="card-header"><strong>Roster</strong></div>
+      <div class="card-body">
+        <form class="row g-2 mb-3" method="post" action="/roster">
+          <div class="col-md-3">
+            <label class="form-label mb-1 as-meta">Name</label>
+            <input class="form-control" name="display_name" placeholder="Display name" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label mb-1 as-meta">Email</label>
+            <input class="form-control" name="email" placeholder="name@company.com" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label mb-1 as-meta">ADO unique name</label>
+            <input class="form-control" name="ado_unique_name" placeholder="ADO unique name" required>
+          </div>
+          <div class="col-md-1 form-check pt-2"><input class="form-check-input" type="checkbox" name="active" value="true" checked> Active</div>
+          <div class="col-md-1"><button class="btn btn-sm btn-primary">Add</button></div>
+        </form>
+        <table class="table table-sm table-striped">
+          {% for member in roster %}
+          <tr>
+            <td>{{ member.display_name }}</td>
+            <td>{{ member.email }}</td>
+            <td>{% if member.active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+            <td>
+              <form method="post" action="/roster/{{ member.id }}/delete">
+                <button class="btn btn-sm btn-outline-secondary">Deactivate</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-header"><strong>Recently applied</strong></div>
+  <ul class="list-group list-group-flush">
+    {% for proposal in applied %}
+      <li class="list-group-item">
+        <span class="as-meta">#{{ proposal.applied_work_item_id }}</span>
+        <span class="fw-semibold ms-1">{{ proposal.title }}</span>
+      </li>
+    {% else %}
+      <li class="list-group-item text-muted">No recently applied changes.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

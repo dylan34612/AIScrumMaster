@@ -1,0 +1,98 @@
+{% from "macros/proposal_card.html" import proposal_row %}
+{% set proposal_previews = proposal_previews | default({}) %}
+{% set proposal_judgements = proposal_judgements | default({}) %}
+{% if proposals %}
+  <div class="mb-2">
+    <div class="btn-group btn-group-sm" role="group" aria-label="Proposal filters">
+      <button type="button" class="btn btn-outline-secondary active" data-filter="all" onclick="filterChatProposals(this)">All</button>
+      <button type="button" class="btn btn-outline-secondary" data-filter="Pending" onclick="filterChatProposals(this)">Pending</button>
+      <button type="button" class="btn btn-outline-secondary" data-filter="Failed" onclick="filterChatProposals(this)">Failed</button>
+      <button type="button" class="btn btn-outline-secondary" data-filter="Applied" onclick="filterChatProposals(this)">Applied</button>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover table-striped align-middle mb-0" id="chat-proposals-table">
+      <thead>
+        <tr>
+          <th>Conf</th>
+          <th>Summary</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for proposal in proposals %}
+          <tr data-status="{{ proposal.status.value }}">
+            {% set j = proposal_judgements.get(proposal.id) %}
+            <td>
+              <span class="badge {% if proposal.confidence_score >= 80 %}text-bg-success{% elif proposal.confidence_score >= 60 %}text-bg-warning{% else %}text-bg-danger{% endif %}">
+                {{ proposal.confidence_score }}
+              </span>
+              {% if j %}
+                <div class="small mt-1">
+                  <span class="badge {% if j.risk_level == 'low' %}text-bg-success{% elif j.risk_level == 'medium' %}text-bg-warning{% else %}text-bg-danger{% endif %}">
+                    Judge {{ j.adjusted_confidence }} · {{ j.risk_level }}
+                  </span>
+                  {% if j.auto_apply_ok %}
+                    <span class="badge text-bg-primary">Auto-apply OK</span>
+                  {% endif %}
+                </div>
+              {% endif %}
+            </td>
+            <td>
+              <div class="as-meta">
+                {{ proposal.change_type.value }} ·
+                {% if proposal.target_work_item_id %}
+                  {% set tp = proposal_previews.get(proposal.id) %}
+                  {% if tp and tp.target_url %}
+                    <a href="{{ tp.target_url }}" target="_blank">#{{ proposal.target_work_item_id }}</a>
+                  {% else %}
+                    #{{ proposal.target_work_item_id }}
+                  {% endif %}
+                  {% if tp and tp.target_title %}
+                    <span class="text-muted">· {{ tp.target_title }}</span>
+                  {% endif %}
+                {% else %}
+                  New {{ proposal.work_item_type.value }}
+                {% endif %}
+              </div>
+              <div class="fw-semibold">{{ proposal.title }}</div>
+              {% set preview = proposal_previews.get(proposal.id) %}
+              <details class="mt-1">
+                <summary class="small text-muted">Rationale / details</summary>
+                <div class="as-meta text-wrap mt-1">{{ proposal.rationale }}</div>
+                {% if preview %}
+                  <div class="small mt-1">
+                    {% if preview.new_state %}<div><strong>New state</strong>: {{ preview.new_state }}</div>{% endif %}
+                    {% if preview.new_assignee %}<div><strong>New assignee</strong>: {{ preview.new_assignee }}</div>{% endif %}
+                    {% if preview.comment_preview %}
+                      <div class="mt-1"><strong>Comment</strong></div>
+                      <pre class="as-pre mb-0 small">{{ preview.comment_preview | e }}</pre>
+                    {% endif %}
+                  </div>
+                {% endif %}
+              </details>
+            </td>
+            <td>
+              <span class="badge text-bg-secondary">{{ proposal.status.value }}</span>
+              {% if proposal.status.value == "Applied" and proposal.applied_work_item_id %}
+                <div class="as-meta">#{{ proposal.applied_work_item_id }}</div>
+              {% endif %}
+            </td>
+            <td class="text-nowrap text-end">
+              {% from "macros/proposal_card.html" import proposal_actions %}
+              {{ proposal_actions(proposal, chat_session, proposal_judgements, proposal_previews) }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="as-meta mt-2">
+    Tip: low-risk Assign / state / hygiene comments may auto-apply when Autopilot is on.
+  </div>
+{% else %}
+  <div class="as-meta">
+    No proposals from this chat yet. Ask me to update the board in plain language.
+  </div>
+{% endif %}

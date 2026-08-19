@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block body_class %}as-chat-page{% endblock %}
+{% block main_class %}as-chat-main-wrap{% endblock %}
+{% block content %}
+<div class="as-chat-layout">
+  <div class="as-chat-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h1 class="h5 mb-0">Scrum Master Chat</h1>
+      <div class="as-meta d-none d-md-block">
+        Ask questions or say “move #412 to Committed and assign Alex”.
+      </div>
+    </div>
+    <div class="as-meta text-nowrap d-flex flex-wrap gap-2 align-items-center">
+      {% if settings.app_autopilot_enabled %}
+        <span class="badge text-bg-success">Autopilot On</span>
+        {% if autopilot_applied_today is defined %}
+          <span class="badge text-bg-light text-dark border">{{ autopilot_applied_today }} auto-applied today</span>
+        {% endif %}
+      {% else %}
+        <span class="badge text-bg-secondary" title="Set APP_AUTOPILOT_ENABLED=true">Autopilot Off</span>
+      {% endif %}
+      Pending: <span class="badge text-bg-secondary">{{ pending_count }}</span>
+      Failed: <span class="badge text-bg-secondary">{{ failed_count }}</span>
+      Awaiting: <span class="badge text-bg-secondary">{{ awaiting_count }}</span>
+      {% if running_runs %}
+        <span class="badge text-bg-primary">Ingestion running</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if ado_unavailable_banner %}
+    <div class="alert alert-warning py-2 mb-0 as-chat-header">Azure DevOps is currently unreachable — chat answers may lack live board data.</div>
+  {% endif %}
+
+  <div class="row g-3 as-chat-row">
+    <div class="col-12 col-xxl-7 col-xl-6 d-flex flex-column as-chat-main">
+      <div class="card mb-2 flex-grow-1 d-flex flex-column as-chat-pane">
+        <div class="card-body overflow-auto flex-grow-1" id="chat-messages">
+          {% include "chat_messages.html" %}
+        </div>
+        <div id="chat-indicator" class="htmx-indicator px-3 pb-2 flex-shrink-0">
+          <div class="as-typing"><span></span><span></span><span></span> Thinking…</div>
+        </div>
+      </div>
+
+      <div class="as-chat-composer">
+        <div class="as-chat-suggestions mb-2 d-flex flex-wrap gap-1" id="chat-suggestions">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-suggest="What's blocked on the board?">What's blocked?</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-suggest="Review the board">Review the board</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-suggest="Summarize WIP and risks">Summarize WIP</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-suggest="Fix failed proposals with AI">Fix failures</button>
+        </div>
+
+        <form
+          id="chat-send-form"
+          hx-post="/chat/messages"
+          hx-target="#chat-messages"
+          hx-swap="innerHTML scroll:bottom"
+          hx-indicator="#chat-indicator"
+          hx-disabled-elt="find button, find textarea"
+          hx-on::after-request="this.querySelector('textarea').value='';"
+        >
+          <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+          <input type="hidden" name="mode" id="chat-mode" value="auto">
+          <div class="mb-2 position-relative">
+            <textarea
+              class="form-control"
+              id="chat-input"
+              name="content"
+              rows="2"
+              placeholder="Ask anything, or say “move #412 to Committed and assign Alex”…"
+              required
+              autocomplete="off"
+              aria-label="Message"
+            ></textarea>
+            <div id="chat-autocomplete" class="as-autocomplete list-group d-none"></div>
+          </div>
+          <div class="d-flex gap-2 flex-wrap align-items-center">
+            <button class="btn btn-primary" type="submit">Send</button>
+            <button class="btn btn-outline-success" type="button" id="force-propose-btn" {% if running_runs %}disabled{% endif %}>
+              Force propose
+            </button>
+            <button class="btn btn-outline-secondary" type="button"
+                    hx-post="/chat/review"
+                    hx-target="#chat-messages"
+                    hx-swap="innerHTML scroll:bottom"
+                    hx-include="[name='session_id']"
+                    hx-indicator="#chat-indicator"
+                    {% if running_runs %}disabled{% endif %}>
+              Review board
+            </button>
+            <span class="as-meta ms-auto d-none d-lg-inline">Enter to send · Shift+Enter for newline</span>
+          </div>
+        </form>
+        <form
+          method="post"
+          action="/chat/clear"
+          class="mt-2"
+          onsubmit="return confirm('Clear this chat and its proposals?');"
+        >
+          <input type="hidden" name="session_id" value="{{ chat_session.id }}">
+          <button class="btn btn-sm btn-outline-danger" type="submit">Clear chat</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="col-12 col-xxl-5 col-xl-6 d-flex flex-column min-h-0">
+      <div class="card as-chat-sidebar flex-grow-1">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong>Proposals from this chat</strong>
+          <span class="badge text-bg-secondary">{{ proposals|length }}</span>
+        </div>
+        <div class="card-body" id="chat-proposals">
+          {% include "chat_proposals.html" %}
+        </div>
+      </div>
+
+      {% if chat_sessions is defined and chat_sessions|length > 1 %}
+      <div class="card mt-2 flex-shrink-0">
+        <div class="card-header py-2"><strong>Sessions</strong></div>
+        <ul class="list-group list-group-flush">
+          {% for s in chat_sessions %}
+            <li class="list-group-item d-flex justify-content-between align-items-center {% if s.id == chat_session.id %}active{% endif %}">
+              <a class="{% if s.id == chat_session.id %}text-white{% endif %}" href="/chat?session_id={{ s.id }}">{{ s.title }}</a>
+              <span class="badge text-bg-light text-dark">#{{ s.id }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+        <div class="card-body py-2">
+          <form method="post" action="/chat/sessions/new">
+            <button class="btn btn-sm btn-outline-primary">New session</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    function scrollChatToBottom() {
+      const el = document.getElementById("chat-messages");
+      if (!el) return;
+      const stick = function() { el.scrollTop = el.scrollHeight; };
+      stick();
+      // After swap/layout (and images/markdown settle), stick again.
+      requestAnimationFrame(function() {
+        stick();
+        requestAnimationFrame(stick);
+      });
+      setTimeout(stick, 50);
+      setTimeout(stick, 200);
+    }
+
+    function isChatMessagesTarget(target) {
+      return target && (target.id === "chat-messages" || (target.closest && target.closest("#chat-messages")));
+    }
+
+    scrollChatToBottom();
+
+    document.body.addEventListener("htmx:beforeRequest", function(ev) {
+      const target = ev.detail && ev.detail.target;
+      if (isChatMessagesTarget(target)) {
+        scrollChatToBottom();
+      }
+    });
+    document.body.addEventListener("htmx:afterSwap", function(ev) {
+      const target = ev.detail && ev.detail.target;
+      if (isChatMessagesTarget(target)) {
+        scrollChatToBottom();
+      }
+    });
+    document.body.addEventListener("htmx:oobAfterSwap", function(ev) {
+      const target = ev.detail && ev.detail.target;
+      if (isChatMessagesTarget(target)) {
+        scrollChatToBottom();
+      }
+    });
+    document.body.addEventListener("htmx:afterSettle", function(ev) {
+      const target = ev.detail && ev.detail.target;
+      if (isChatMessagesTarget(target)) {
+        scrollChatToBottom();
+      }
+    });
+
+    const form = document.getElementById("chat-send-form");
+    const input = document.getElementById("chat-input");
+    const mode = document.getElementById("chat-mode");
+    const forceBtn = document.getElementById("force-propose-btn");
+    const ac = document.getElementById("chat-autocomplete");
+    const roster = {{ roster_json | default("[]") | safe }};
+    const recentIds = {{ recent_wi_ids_json | default("[]") | safe }};
+
+    if (forceBtn) {
+      forceBtn.addEventListener("click", function() {
+        mode.value = "propose";
+        form.requestSubmit();
+        mode.value = "auto";
+      });
+    }
+
+    document.querySelectorAll("[data-suggest]").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        input.value = btn.getAttribute("data-suggest") || "";
+        input.focus();
+      });
+    });
+
+    if (input) {
+      input.addEventListener("keydown", function(ev) {
+        if (ev.key === "Enter" && !ev.shiftKey) {
+          ev.preventDefault();
+          form.requestSubmit();
+        }
+      });
+
+      input.addEventListener("input", function() {
+        const val = input.value;
+        const at = val.lastIndexOf("@");
+        const hash = val.lastIndexOf("#");
+        const cursor = input.selectionStart || val.length;
+        let items = [];
+        if (at >= 0 && at >= hash && cursor > at) {
+          const q = val.slice(at + 1, cursor).toLowerCase();
+          items = roster.filter(function(r) {
+            return (r.display_name || "").toLowerCase().includes(q) || (r.ado_unique_name || "").toLowerCase().includes(q);
+          }).slice(0, 6).map(function(r) {
+            return { label: r.display_name, insert: r.display_name };
+          });
+        } else if (hash >= 0 && cursor > hash) {
+          const q = val.slice(hash + 1, cursor);
+          items = recentIds.filter(function(id) {
+            return String(id).startsWith(q);
+          }).slice(0, 6).map(function(id) {
+            return { label: "#" + id, insert: String(id) };
+          });
+        }
+        if (!items.length) {
+          ac.classList.add("d-none");
+          ac.innerHTML = "";
+          return;
+        }
+        ac.innerHTML = items.map(function(it) {
+          return '<button type="button" class="list-group-item list-group-item-action" data-insert="' + it.insert.replace(/"/g, "&quot;") + '">' + it.label + "</button>";
+        }).join("");
+        ac.classList.remove("d-none");
+        ac.querySelectorAll("button").forEach(function(b) {
+          b.addEventListener("click", function() {
+            const insert = b.getAttribute("data-insert") || "";
+            const start = Math.max(at, hash);
+            const prefix = start === at ? "@" : "#";
+            input.value = val.slice(0, start) + prefix + insert + val.slice(cursor);
+            ac.classList.add("d-none");
+            input.focus();
+          });
+        });
+      });
+    }
+  })();
+
+  function filterChatProposals(btn) {
+    const filter = btn.getAttribute("data-filter") || "all";
+    document.querySelectorAll("#chat-proposals [data-filter]").forEach(function(b) {
+      b.classList.toggle("active", b === btn);
+    });
+    document.querySelectorAll("#chat-proposals-table tbody tr").forEach(function(row) {
+      const status = row.getAttribute("data-status") || "";
+      row.style.display = (filter === "all" || status === filter) ? "" : "none";
+    });
+  }
+</script>
+{% endblock %}
